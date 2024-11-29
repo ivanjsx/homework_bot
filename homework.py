@@ -8,7 +8,7 @@ import requests
 from telebot import TeleBot
 from dotenv import load_dotenv
 
-import exceptions as e
+from exceptions import RequestError, UnexpectedResponseData, MessageNotSent
 
 load_dotenv()
 
@@ -31,7 +31,16 @@ HOMEWORK_VERDICTS = {
 
 def check_tokens() -> bool:
     """Проверяет доступность необходимых переменных окружения."""
-    return all([TELEGRAM_TOKEN, PRACTICUM_TOKEN, TELEGRAM_CHAT_ID])
+    tokens = {
+        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
+        "PRACTICUM_TOKEN": PRACTICUM_TOKEN,
+        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID,
+    }
+    for name, value in tokens.items():
+        if not value:
+            logging.critical(f"Недоступна переменная окружения {name}")
+            return False
+    return True
 
 
 def send_message(bot: TeleBot, message: str) -> None:
@@ -42,8 +51,8 @@ def send_message(bot: TeleBot, message: str) -> None:
             chat_id=TELEGRAM_CHAT_ID,
             text=message,
         )
-    except Exception as error:
-        raise e.MessageNotSent(f"Ошибка при отправке: {error}")
+    except requests.RequestException as error:
+        raise MessageNotSent(f"Ошибка при отправке: {error}")
     logging.debug(msg="Успешно отправили сообщение в Телеграм")
 
 
@@ -58,24 +67,24 @@ def get_api_answer(timestamp: int = 0) -> dict:
         response = requests.get(**request_params)
 
     except requests.RequestException as error:
-        raise e.RequestError(f"Ошибка при совершении запроса к API: {error}")
+        raise RequestError(f"Ошибка при совершении запроса к API: {error}")
 
     logging.info(msg="Получили ответ от эндпоинта API")
     status = HTTPStatus(value=response.status_code)
     if status != HTTPStatus.OK:
-        raise e.RequestError(
+        raise RequestError(
             f"Статус ответа: {status.value} {status.phrase}. "
             f"Полный текст: {response.text}"
         )
     logging.info(msg="Статус ответа OK")
 
     try:
-        logging.info(msg="Преобразуем ответ в словарь")
+        logging.debug(msg="Преобразуем ответ в словарь")
         result = response.json()
     except ValueError as error:
-        raise e.UnexpectedResponseData(f"Не удалось распарсить ответ: {error}")
+        raise UnexpectedResponseData(f"Не удалось распарсить ответ: {error}")
 
-    logging.info(msg="Успешно привели ответ к словарю")
+    logging.debug(msg="Успешно привели ответ к словарю")
     return result
 
 
@@ -94,7 +103,7 @@ def check_response(response: dict) -> None:
             "Тип данных списка работ отличается от list"
         )
     if not response["homeworks"]:
-        raise e.UnexpectedResponseData(
+        raise UnexpectedResponseData(
             "API вернула пустой список домашних работ: "
             "ни одна работа пока не взята на проверку"
         )
@@ -158,7 +167,7 @@ def main():
             check_response(response)
             homework = get_latest_homework(response)
             current_status = parse_status(homework)
-        except (e.UnexpectedResponseData, e.RequestError,
+        except (UnexpectedResponseData, RequestError,
                 TypeError, KeyError) as error:
             current_status = f"Технические неполадки: {error}"
             logging.error(current_status)
@@ -171,7 +180,7 @@ def main():
         else:
             try:
                 send_message(bot=bot, message=current_status)
-            except e.MessageNotSent as error:
+            except MessageNotSent as error:
                 current_status = f"Не удалось отправить сообщение: {error}"
                 logging.error(current_status)
             except Exception as error:
