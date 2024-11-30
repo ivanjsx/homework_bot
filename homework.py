@@ -5,7 +5,7 @@ import time
 from http import HTTPStatus
 
 import requests
-from telebot import TeleBot
+from telebot import TeleBot, apihelper
 from dotenv import load_dotenv
 
 from exceptions import RequestError, UnexpectedResponseData, MessageNotSent
@@ -51,6 +51,8 @@ def send_message(bot: TeleBot, message: str) -> None:
             chat_id=TELEGRAM_CHAT_ID,
             text=message,
         )
+    except apihelper.ApiException as error:
+        raise MessageNotSent(f"Ошибка при отправке: {error}")
     except requests.RequestException as error:
         raise MessageNotSent(f"Ошибка при отправке: {error}")
     logging.debug(msg="Успешно отправили сообщение в Телеграм")
@@ -93,6 +95,10 @@ def check_response(response: dict) -> None:
     if not isinstance(response, dict):
         raise TypeError(
             "Тип данных ответа отличается от dict"
+        )
+    if "current_date" not in response:
+        raise KeyError(
+            "В ответе отсутствует ключ с датой запроса"
         )
     if "homeworks" not in response:
         raise KeyError(
@@ -160,10 +166,11 @@ def main():
     bot = TeleBot(token=TELEGRAM_TOKEN)
     logging.info(msg="Успешно завершили инициализацию бота")
     previous_status = ""
+    timestamp = 0
 
     while True:
         try:
-            response = get_api_answer()
+            response = get_api_answer(timestamp)
             check_response(response)
             homework = get_latest_homework(response)
             current_status = parse_status(homework)
@@ -180,6 +187,7 @@ def main():
         else:
             try:
                 send_message(bot=bot, message=current_status)
+                timestamp = response.get("current_date", 0)
             except MessageNotSent as error:
                 current_status = f"Не удалось отправить сообщение: {error}"
                 logging.error(current_status)
